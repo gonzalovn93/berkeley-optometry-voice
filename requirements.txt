@@ -1,0 +1,10 @@
+anthropic
+openai
+sounddevice
+soundfile
+scipy
+numpy
+python-dotenv
+fastapi
+uvicorn
+python-multipart

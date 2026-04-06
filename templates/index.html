@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Berkeley Optometry Clinic — Voice Agent</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #1a1a1a;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .header {
+            background: #1a365d;
+            color: white;
+            width: 100%;
+            padding: 20px;
+            text-align: center;
+        }
+        .header h1 { font-size: 1.4rem; font-weight: 600; }
+        .header p { font-size: 0.85rem; opacity: 0.8; margin-top: 4px; }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+            padding: 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .status-bar {
+            background: white;
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #cbd5e0;
+            transition: background 0.3s;
+        }
+        .status-dot.active { background: #38a169; }
+        .status-dot.recording { background: #e53e3e; animation: pulse 1s infinite; }
+        .status-dot.processing { background: #d69e2e; animation: pulse 1s infinite; }
+        .status-text { font-size: 0.9rem; color: #4a5568; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .transcript {
+            flex: 1;
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            overflow-y: auto;
+            max-height: 400px;
+            min-height: 200px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .turn {
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            max-width: 85%;
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+        .turn.maya {
+            background: #ebf4ff;
+            color: #2b6cb0;
+            border-left: 3px solid #3182ce;
+        }
+        .turn.caller {
+            background: #f0fff4;
+            color: #276749;
+            border-left: 3px solid #38a169;
+            margin-left: auto;
+        }
+        .turn .speaker {
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .turn.system {
+            background: #fff5f5;
+            color: #9b2c2c;
+            border-left: 3px solid #e53e3e;
+            text-align: center;
+            max-width: 100%;
+            font-size: 0.85rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            padding-bottom: 20px;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: #3182ce;
+            color: white;
+        }
+        .btn-start:hover:not(:disabled) { background: #2b6cb0; }
+
+        .btn-talk {
+            background: #38a169;
+            color: white;
+            min-width: 180px;
+        }
+        .btn-talk:hover:not(:disabled) { background: #2f855a; }
+        .btn-talk.recording {
+            background: #e53e3e;
+        }
+
+        .btn-end {
+            background: #718096;
+            color: white;
+        }
+        .btn-end:hover:not(:disabled) { background: #4a5568; }
+
+        .info {
+            text-align: center;
+            font-size: 0.8rem;
+            color: #a0aec0;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Berkeley Optometry Clinic</h1>
+        <p>Voice Scheduling Agent — Test Interface</p>
+    </div>
+
+    <div class="container">
+        <div class="status-bar">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="status-text" id="statusText">Ready to start call</span>
+        </div>
+
+        <div class="transcript" id="transcript">
+            <div class="turn system">
+                <div class="speaker">System</div>
+                Click "Start Call" to begin. Maya will greet you, then click and hold "Hold to Talk" to speak.
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-start" id="btnStart" onclick="startCall()">Start Call</button>
+            <button class="btn btn-talk" id="btnTalk" disabled
+                    onmousedown="startRecording()" onmouseup="stopRecording()"
+                    ontouchstart="startRecording()" ontouchend="stopRecording()">
+                Hold to Talk
+            </button>
+            <button class="btn btn-end" id="btnEnd" disabled onclick="endCall()">End Call</button>
+        </div>
+        <div class="info">Hold the green button while speaking, release when done</div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let audioContext = null;
+        let isRecording = false;
+        let callActive = false;
+
+        function setStatus(text, state) {
+            document.getElementById('statusText').textContent = text;
+            const dot = document.getElementById('statusDot');
+            dot.className = 'status-dot ' + (state || '');
+        }
+
+        function addTurn(speaker, text) {
+            const transcript = document.getElementById('transcript');
+            const div = document.createElement('div');
+            const cls = speaker === 'Maya' ? 'maya' : speaker === 'Caller' ? 'caller' : 'system';
+            div.className = 'turn ' + cls;
+            div.innerHTML = `<div class="speaker">${speaker}</div>${text}`;
+            transcript.appendChild(div);
+            transcript.scrollTop = transcript.scrollHeight;
+        }
+
+        async function playPcmAudio(pcmBytes) {
+            if (!audioContext) {
+                audioContext = new AudioContext({ sampleRate: 24000 });
+            }
+            // PCM int16 -> float32
+            const int16 = new Int16Array(pcmBytes);
+            const float32 = new Float32Array(int16.length);
+            for (let i = 0; i < int16.length; i++) {
+                float32[i] = int16[i] / 32768.0;
+            }
+            const buffer = audioContext.createBuffer(1, float32.length, 24000);
+            buffer.copyToChannel(float32, 0);
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+
+            return new Promise(resolve => {
+                source.onended = resolve;
+                source.start();
+            });
+        }
+
+        async function startCall() {
+            document.getElementById('btnStart').disabled = true;
+            setStatus('Connecting...', 'processing');
+
+            try {
+                const resp = await fetch('/api/start', { method: 'POST' });
+                sessionId = resp.headers.get('X-Session-Id');
+                const mayaText = resp.headers.get('X-Maya-Text');
+                const audioData = await resp.arrayBuffer();
+
+                callActive = true;
+                document.getElementById('btnTalk').disabled = false;
+                document.getElementById('btnEnd').disabled = false;
+
+                addTurn('Maya', mayaText);
+                setStatus('Maya is speaking...', 'active');
+                await playPcmAudio(audioData);
+                setStatus('Your turn — hold the button to speak', 'active');
+            } catch (e) {
+                setStatus('Error starting call: ' + e.message, '');
+                document.getElementById('btnStart').disabled = false;
+            }
+        }
+
+        async function startRecording() {
+            if (!callActive || isRecording) return;
+            isRecording = true;
+
+            const btn = document.getElementById('btnTalk');
+            btn.textContent = 'Recording...';
+            btn.classList.add('recording');
+            setStatus('Listening...', 'recording');
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = [];
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) audioChunks.push(e.data);
+                };
+                mediaRecorder.start();
+            } catch (e) {
+                setStatus('Microphone error: ' + e.message, '');
+                isRecording = false;
+                const btn = document.getElementById('btnTalk');
+                btn.textContent = 'Hold to Talk';
+                btn.classList.remove('recording');
+            }
+        }
+
+        async function stopRecording() {
+            if (!isRecording || !mediaRecorder) return;
+
+            const btn = document.getElementById('btnTalk');
+            btn.textContent = 'Hold to Talk';
+            btn.classList.remove('recording');
+            btn.disabled = true;
+
+            setStatus('Processing...', 'processing');
+
+            mediaRecorder.stop();
+            isRecording = false;
+
+            mediaRecorder.onstop = async () => {
+                // Stop mic tracks
+                mediaRecorder.stream.getTracks().forEach(t => t.stop());
+
+                // Convert webm to wav
+                const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const wavBlob = await convertToWav(webmBlob);
+
+                // Send to server
+                const formData = new FormData();
+                formData.append('audio', wavBlob, 'recording.wav');
+                formData.append('session_id', sessionId);
+
+                try {
+                    const resp = await fetch('/api/talk', {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    const callerText = resp.headers.get('X-Caller-Text');
+                    const mayaText = resp.headers.get('X-Maya-Text');
+                    const callEnded = resp.headers.get('X-Call-Ended') === 'true';
+                    const escalated = resp.headers.get('X-Escalated') === 'true';
+                    const audioData = await resp.arrayBuffer();
+
+                    if (callerText) addTurn('Caller', callerText);
+                    addTurn('Maya', mayaText);
+
+                    setStatus('Maya is speaking...', 'active');
+                    await playPcmAudio(audioData);
+
+                    if (callEnded) {
+                        addTurn('System', 'Call ended. Transcript saved.');
+                        setStatus('Call completed', '');
+                        callActive = false;
+                        document.getElementById('btnTalk').disabled = true;
+                        document.getElementById('btnEnd').disabled = true;
+                        document.getElementById('btnStart').disabled = false;
+                    } else if (escalated) {
+                        addTurn('System', 'Call escalated to human staff.');
+                        setStatus('Escalated to human', '');
+                        callActive = false;
+                        document.getElementById('btnTalk').disabled = true;
+                        document.getElementById('btnEnd').disabled = true;
+                        document.getElementById('btnStart').disabled = false;
+                    } else {
+                        setStatus('Your turn — hold the button to speak', 'active');
+                        btn.disabled = false;
+                    }
+                } catch (e) {
+                    setStatus('Error: ' + e.message, '');
+                    btn.disabled = false;
+                }
+            };
+        }
+
+        async function convertToWav(webmBlob) {
+            // Decode webm using AudioContext, re-encode as WAV
+            const ctx = new AudioContext({ sampleRate: 16000 });
+            const arrayBuffer = await webmBlob.arrayBuffer();
+            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+            const channelData = audioBuffer.getChannelData(0);
+
+            // Build WAV file
+            const wavBuffer = new ArrayBuffer(44 + channelData.length * 2);
+            const view = new DataView(wavBuffer);
+
+            // WAV header
+            const writeStr = (offset, str) => {
+                for (let i = 0; i < str.length; i++)
+                    view.setUint8(offset + i, str.charCodeAt(i));
+            };
+            writeStr(0, 'RIFF');
+            view.setUint32(4, 36 + channelData.length * 2, true);
+            writeStr(8, 'WAVE');
+            writeStr(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true); // PCM
+            view.setUint16(22, 1, true); // mono
+            view.setUint32(24, 16000, true); // sample rate
+            view.setUint32(28, 32000, true); // byte rate
+            view.setUint16(32, 2, true); // block align
+            view.setUint16(34, 16, true); // bits per sample
+            writeStr(36, 'data');
+            view.setUint32(40, channelData.length * 2, true);
+
+            // Convert float32 to int16
+            for (let i = 0; i < channelData.length; i++) {
+                const s = Math.max(-1, Math.min(1, channelData[i]));
+                view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+
+            return new Blob([wavBuffer], { type: 'audio/wav' });
+        }
+
+        function endCall() {
+            callActive = false;
+            addTurn('System', 'Call ended by user.');
+            setStatus('Call ended', '');
+            document.getElementById('btnTalk').disabled = true;
+            document.getElementById('btnEnd').disabled = true;
+            document.getElementById('btnStart').disabled = false;
+        }
+    </script>
+</body>
+</html>
