@@ -216,8 +216,11 @@
             if (!audioContext) {
                 audioContext = new AudioContext({ sampleRate: 24000 });
             }
-            // PCM int16 -> float32
-            const int16 = new Int16Array(pcmBytes);
+            // PCM int16 -> float32 (ensure even byte length for Int16Array)
+            const aligned = (pcmBytes.byteLength % 2 !== 0)
+                ? pcmBytes.slice(0, pcmBytes.byteLength - 1)
+                : pcmBytes;
+            const int16 = new Int16Array(aligned);
             const float32 = new Float32Array(int16.length);
             for (let i = 0; i < int16.length; i++) {
                 float32[i] = int16[i] / 32768.0;

@@ -10,7 +10,7 @@ load_dotenv()
 
 class ConversationManager:
     MODEL = "claude-haiku-4-5-20251001"
-    MAX_TOKENS = 256  # Maya speaks 2-3 sentences max
+    MAX_TOKENS = 512  # Enough for tool calls + spoken response
 
     def __init__(self):
         self.client = anthropic.Anthropic()
@@ -82,6 +82,18 @@ class ConversationManager:
                     if hasattr(block, "text")
                 ).strip()
                 return text_response
+
+            elif response.stop_reason == "max_tokens":
+                # Response got truncated — extract any text we got
+                self.messages.append({
+                    "role": "assistant",
+                    "content": response.content,
+                })
+                text_response = " ".join(
+                    block.text for block in response.content
+                    if hasattr(block, "text")
+                ).strip()
+                return text_response if text_response else "I'm sorry, could you repeat that?"
 
             else:
                 return "I'm sorry, something went wrong. Let me connect you with our team."
