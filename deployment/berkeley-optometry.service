@@ -1,0 +1,15 @@
+[Unit]
+Description=Berkeley Optometry Voice Agent
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/berkeley-optometry-voice
+EnvironmentFile=/home/ubuntu/berkeley-optometry-voice/.env
+ExecStart=/usr/bin/python3 -m uvicorn server:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
