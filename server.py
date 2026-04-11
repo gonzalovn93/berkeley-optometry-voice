@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from stt import transcribe
-from tts import synthesize
+from tts import synthesize, synthesize_parallel, get_filler_audio
 from conversation import ConversationManager
 from transcript import TranscriptRecorder
 
@@ -126,8 +126,14 @@ async def talk(
 
     recorder.add_turn("Maya", maya_response)
 
-    # TTS
-    audio_bytes = synthesize(maya_response)
+    # TTS — parallel sentence synthesis (2-3x faster for multi-sentence responses)
+    audio_bytes = synthesize_parallel(maya_response)
+
+    # Prepend filler audio when tool calls caused extra latency.
+    # The caller hears "Mm-hmm, let me check on that" immediately,
+    # masking the 1-2 seconds of tool execution + second LLM call.
+    if convo.last_used_tools:
+        audio_bytes = get_filler_audio() + audio_bytes
 
     call_ended = convo.call_ended
     escalated = convo.escalated

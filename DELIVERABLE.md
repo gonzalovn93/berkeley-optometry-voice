@@ -312,7 +312,7 @@ The hybrid architecture keeps costs well below $50/month for a typical small cli
 
 | Layer | Provider | Model/Service | Cost | Purpose |
 |-------|----------|---------------|------|---------|
-| Reasoning | Anthropic | `claude-haiku-4-5` | $0.80/$4 per 1M tokens | Conversation logic, tool use, call flow |
+| Reasoning | Anthropic | `claude-haiku-4-5` + prompt caching | $0.80/$4 per 1M tokens (90% cheaper on cached prefix) | Conversation logic, tool use, call flow |
 | Speech-to-Text | OpenAI | `whisper-1` | $0.006 per 1M tokens | Transcribe caller's voice to text |
 | Text-to-Speech | OpenAI | `gpt-4o-mini-tts` (nova) | $0.006 per 1M tokens | Maya's voice with tone instructions |
 | Calendar | Local | `calendar_sim.py` (JSON) | Free | Simulated availability, booking, rescheduling |
@@ -343,7 +343,7 @@ berkeley-optometry-voice/
 |-- tools.py             # Tool dispatcher
 |-- audio.py             # Mic recording + speaker playback
 |-- stt.py               # OpenAI Whisper speech-to-text
-|-- tts.py               # OpenAI TTS text-to-speech
+|-- tts.py               # OpenAI TTS — parallel sentence synthesis + filler audio
 |-- transcript.py        # Markdown transcript recorder
 |-- requirements.txt     # Python dependencies
 |-- .env                 # API keys (not committed)
@@ -613,3 +613,84 @@ In Transcript B, the caller says "I'm scared" about sudden blurry vision. Two es
 Voice agents operate with lower risk tolerance than text agents because corrections are harder. A text agent can display an "Edit" button or let the user modify a previous message. A voice agent cannot unsay something, and the caller cannot click "undo."
 
 This is why the booking flow requires explicit verbal confirmation before calling `book_appointment`. In Transcript A, Maya reads back every detail — name, appointment type, date, time, duration — and waits for the caller to say "yes" before proceeding. A text agent might allow a one-click "Confirm" button with all details visible. In voice, the confirm-before-action pattern is the only safeguard against booking errors, because there is no undo. The system prompt rule "Never end the call before the action is confirmed" exists for the same reason: premature call termination in voice is unrecoverable. The caller would have to call back and start over.
+
+## 13. Latency Optimizations
+
+Research shows humans take turns in conversation with about 200 ms of silence between them, and people start feeling something is off around 600 ms. A standard voice pipeline — STT, LLM reasoning, TTS — takes 800 ms to 2 seconds. That constraint changes how you build.
+
+The initial version of this system had a straightforward sequential pipeline:
+
+```text
+Caller stops speaking
+  → STT: Whisper API          ~800 ms
+  → LLM: Claude Haiku         ~600-1500 ms (worse with tool loops)
+  → TTS: OpenAI TTS           ~500-800 ms (waits for full audio)
+  → Playback starts
+Total: ~1.9-3.1 seconds of silence
+```
+
+Three optimizations were applied to reduce perceived and actual latency:
+
+### 13.1 Prompt Caching
+
+The system prompt (~650 tokens) and 7 tool schemas are identical on every turn of every call. Without caching, Claude re-processes this prefix on every API call. Anthropic's prompt caching stores this prefix server-side for 5 minutes, so only the first request in a call pays the full cost.
+
+Implementation: the system prompt and tool list are wrapped with `cache_control: {"type": "ephemeral"}` in `conversation.py`. On turn 2+, Claude reads the cached prefix instead of reprocessing it. This saves approximately 100-200 ms per turn and reduces input token cost by 90% on the cached portion.
+
+```python
+CACHED_SYSTEM = [
+    {
+        "type": "text",
+        "text": SYSTEM_PROMPT,
+        "cache_control": {"type": "ephemeral"},
+    }
+]
+```
+
+### 13.2 Parallel Sentence TTS
+
+Maya's responses are typically 2-3 sentences. The original implementation synthesized the entire response as a single TTS call. The optimized version splits the response into sentences and synthesizes each in parallel using a thread pool.
+
+For a 3-sentence response, this cuts TTS wall-clock time from ~1500 ms (3 × 500 ms sequential) to ~500 ms (all in parallel, bottlenecked by the slowest sentence).
+
+```python
+def synthesize_parallel(text: str) -> bytes:
+    sentences = _split_sentences(text)
+    if len(sentences) <= 1:
+        return synthesize(text)
+    with ThreadPoolExecutor(max_workers=min(len(sentences), 4)) as pool:
+        audio_chunks = list(pool.map(synthesize, sentences))
+    return b"".join(audio_chunks)
+```
+
+### 13.3 Filler Audio for Tool Calls
+
+The highest-latency path in the system is when Claude makes a tool call. The model must generate the tool call, the server executes it, and Claude generates a second response incorporating the tool result. This double-LLM-call path takes 1.5-3 seconds — well above the 600 ms discomfort threshold.
+
+The fix: pre-generate a short filler phrase ("Mm-hmm, let me check on that") at startup, and prepend it to the audio response whenever tool calls occurred. The caller hears Maya acknowledge their request immediately, followed by a natural 300 ms pause, then the actual answer. The total processing time is unchanged, but the perceived dead silence is eliminated.
+
+```python
+# Pre-generated once, cached for process lifetime
+_filler_audio = synthesize("Mm-hmm, let me check on that.") + SILENCE_GAP
+
+# In the server, when tool calls happened:
+if convo.last_used_tools:
+    audio_bytes = get_filler_audio() + audio_bytes
+```
+
+### Optimized Pipeline
+
+```text
+Caller stops speaking
+  → STT: Whisper API                    ~800 ms
+  → LLM: Claude Haiku (cached prefix)  ~400-1200 ms
+  → TTS: parallel sentences             ~500 ms (constant, not proportional)
+  → Filler prepended if tools used      +0 ms (pre-generated)
+  → Playback starts
+Total: ~1.7-2.5 seconds (actual)
+Perceived: ~0 seconds when filler masks tool-call latency
+```
+
+### What's Next
+
+The remaining bottleneck is the sequential STT → LLM → TTS flow. The next optimization would be streaming Claude's response token-by-token and starting TTS on the first complete sentence while the model continues generating. This would pipeline LLM and TTS, reducing the effective latency to STT + max(LLM first sentence, TTS first sentence) + TTS remaining. This requires an async streaming architecture and is planned for Phase 3.
