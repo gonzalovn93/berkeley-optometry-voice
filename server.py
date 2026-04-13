@@ -6,6 +6,7 @@ Serves a browser UI where users can talk to Maya via push-to-talk.
 import io
 import os
 import uuid
+from urllib.parse import quote
 import numpy as np
 import scipy.io.wavfile as wav
 from fastapi import FastAPI, UploadFile, File, Form
@@ -69,7 +70,7 @@ async def start_call():
         media_type="audio/pcm",
         headers={
             "X-Session-Id": session_id,
-            "X-Maya-Text": OPENING_LINE,
+            "X-Maya-Text": quote(OPENING_LINE),
         },
     )
 
@@ -108,7 +109,7 @@ async def talk(
             content=audio_bytes,
             media_type="audio/pcm",
             headers={
-                "X-Maya-Text": fallback,
+                "X-Maya-Text": quote(fallback),
                 "X-Caller-Text": "",
                 "X-Call-Ended": "false",
                 "X-Escalated": "false",
@@ -150,8 +151,8 @@ async def talk(
         content=audio_bytes,
         media_type="audio/pcm",
         headers={
-            "X-Maya-Text": maya_response.replace("\n", " "),
-            "X-Caller-Text": user_text,
+            "X-Maya-Text": quote(maya_response.replace("\n", " ")),
+            "X-Caller-Text": quote(user_text),
             "X-Call-Ended": str(call_ended).lower(),
             "X-Escalated": str(escalated).lower(),
         },

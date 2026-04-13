@@ -244,7 +244,7 @@
             try {
                 const resp = await fetch('/api/start', { method: 'POST' });
                 sessionId = resp.headers.get('X-Session-Id');
-                const mayaText = resp.headers.get('X-Maya-Text');
+                const mayaText = decodeURIComponent(resp.headers.get('X-Maya-Text'));
                 const audioData = await resp.arrayBuffer();
 
                 callActive = true;
@@ -319,8 +319,8 @@
                         body: formData,
                     });
 
-                    const callerText = resp.headers.get('X-Caller-Text');
-                    const mayaText = resp.headers.get('X-Maya-Text');
+                    const callerText = decodeURIComponent(resp.headers.get('X-Caller-Text') || '');
+                    const mayaText = decodeURIComponent(resp.headers.get('X-Maya-Text') || '');
                     const callEnded = resp.headers.get('X-Call-Ended') === 'true';
                     const escalated = resp.headers.get('X-Escalated') === 'true';
                     const audioData = await resp.arrayBuffer();
